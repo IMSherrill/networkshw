@@ -29,11 +29,12 @@ if __name__ == "__main__":
 
         rootID = id
         cost = 0
-        rootPort = 0
+        rootPortID = 0
+        rootPort = False
 
         forwardingTable = []
-        # i wanna say disable ports that receive bpdu's and are not the rootport
-        disabledPorts = []
+        enabledPorts = []
+        didReceivePBDU = []
 
         def broadcastBPDU():
                 t = threading.Timer(.5, broadcastBPDU)
@@ -84,28 +85,34 @@ if __name__ == "__main__":
 
                         data = json.loads(json_data)
 
+                        bpdu = False
 
                         if data['type'] == "bpdu":
+                                if socket not in didReceivePBDU:
+                                    didReceivePBDU.append(didReceivePBDU)
+
                                 bpdu = data['message']
 
                                 if bpdu['root'] < rootID:
                                         rootID = bpdu['root']
                                         cost = bpdu['cost'] + 1
-                                        rootPort = bpdu['id']
+                                        rootPortID = bpdu['id']
+                                        rootPort = socket
                                 elif bpdu['root'] == rootID and bpdu['cost'] < cost:
                                         rootID = bpdu['root']
                                         cost = bpdu['cost'] + 1
-                                        rootPort = bpdu['id']
+                                        rootPortID = bpdu['id']
+                                        rootPort = socket
                                 elif bpdu['root'] == rootID and bpdu['cost'] == cost and bpdu['id'] < id:
                                         rootID = bpdu['root']
                                         cost = bpdu['cost'] + 1
-                                        rootPort = bpdu['id']
+                                        rootPortID = bpdu['id']
+                                        rootPort = socket
 
-                                print "!!!!!! id: {}, rootID: {}, rootPort: {}, cost: {}".format(id, rootID, rootPort,cost)
 
                         if data['type'] == "data":
                                 #if we receive a socket from a disabled port, drop the message
-                                if socket in disabledPorts:
+                                if socket not in enabledPorts:
                                     #continue will (should) ignore the rest of the iteration and start from the next socket in `for socket in ready`
                                     continue
 
@@ -122,19 +129,36 @@ if __name__ == "__main__":
                                 for row in forwardingTable:
                                         if data['dest'] == row.host:
                                                 destIsInTable = True
+                                                #TODO: check if row.port in enabled ports? probably even though we think we know exactly where to send it
                                                 row.port.send(json_data)
 
                                 if not destIsInTable: #send it to all enabled ports
                                         # ready or sockets?
                                         for s in (socket for socket in ready if not s == socket):
                                             # dont send if that port is disabled
-                                            if s not in disabledPorts:
+                                            if s in enabledPorts:
                                                 s.send(json_data)
 
+
+                        #there will be a period at startup where messages dont get sent is this ok?
+                        for s in sockets:
+                            if s not in enabledPorts:
+                                #did not receive bpdu on that port
+                                if s not in didReceivePBDU:
+                                    enabledPorts.append(s)
+
+                                #port is a rootPort
+                                if s == rootPort:
+                                    enabledPorts.append(s)
+
+                                #all other bridges on that LAN have a longer path to the root, or their bridge ID is higher than yours (I think those will be the same?)
+
+
+
                                 
-                                #TODO: disabling ports
-                                #TODO: check if a port stopped receiving bpdu's <- may not be right
-                                # when does the bridge decide to start shutting off ports?
+                #TODO: disabling ports
+                #TODO: check if a port stopped receiving bpdu's <- may not be right
+                # when does the bridge decide to start shutting off ports?
 
 
 
