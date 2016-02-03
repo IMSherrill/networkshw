@@ -25,6 +25,8 @@ if __name__ == "__main__":
         
         id = sys.argv[1]
         LAN = sys.argv[2:]
+        LANPortNumber = 1
+        socketIDdict = {}
         sockets = []
 
         rootID = id
@@ -41,7 +43,7 @@ if __name__ == "__main__":
                 t.start()
 
                 BPDU = {"source": id, 
-                        "dest":"---", 
+                        "dest": "---", 
                         "type": "bpdu",
                         "message":{     "id":id, 
                                         "root":rootID,
@@ -63,6 +65,10 @@ if __name__ == "__main__":
                         if (now - row.createdAt).seconds > 5:
                                 forwardingTable.remove(row)
 
+        def printForwardingTable():
+            for row in forwardingTable:
+                print "{} {}".format(row.host, row.port)
+
                 
 
         # creates sockets and connects to them
@@ -81,75 +87,85 @@ if __name__ == "__main__":
 
                 # Reads from each fo the ready sockets
                 for socket in ready:
-                        json_data = socket.recv(1500)
 
-                        data = json.loads(json_data)
-
-                        bpdu = False
-
-                        if data['type'] == "bpdu":
-                                if socket not in didReceivePBDU:
-                                    didReceivePBDU.append(didReceivePBDU)
-
-                                bpdu = data['message']
-
-                                if bpdu['root'] < rootID:
-                                        rootID = bpdu['root']
-                                        cost = bpdu['cost'] + 1
-                                        rootPortID = bpdu['id']
-                                        rootPort = socket
-                                elif bpdu['root'] == rootID and bpdu['cost'] < cost:
-                                        rootID = bpdu['root']
-                                        cost = bpdu['cost'] + 1
-                                        rootPortID = bpdu['id']
-                                        rootPort = socket
-                                elif bpdu['root'] == rootID and bpdu['cost'] == cost and bpdu['id'] < id:
-                                        rootID = bpdu['root']
-                                        cost = bpdu['cost'] + 1
-                                        rootPortID = bpdu['id']
-                                        rootPort = socket
+                    if not socketIDdict.get(socket):
+                        socketIDdict[socket] = "{}:{}".format(id,LANPortNumber)
+                        LANPortNumber += 1
 
 
-                        if data['type'] == "data":
-                                #if we receive a socket from a disabled port, drop the message
-                                if socket not in enabledPorts:
-                                    #continue will (should) ignore the rest of the iteration and start from the next socket in `for socket in ready`
-                                    continue
+                    json_data = socket.recv(1500)
 
-                                hostIsInTable = False
-                                for row in forwardingTable:
-                                        if data['source'] == row.host:
-                                                hostIsInTable = True
+                    data = json.loads(json_data)
 
-                                if not hostIsInTable: #add it to forwarding table
-                                        newEntry = TableEntry(host=data['source'], port=socket)
-                                        forwardingTable.append(newEntry)
+                    bpdu = False
 
-                                destIsInTable = False
-                                for row in forwardingTable:
-                                        if data['dest'] == row.host:
-                                                destIsInTable = True
-                                                #TODO: check if row.port in enabled ports? probably even though we think we know exactly where to send it
-                                                row.port.send(json_data)
+                    if data['type'] == "bpdu":
+                            if socket not in didReceivePBDU:
+                                didReceivePBDU.append(didReceivePBDU)
 
-                                if not destIsInTable: #send it to all enabled ports
-                                        # ready or sockets?
-                                        for s in (socket for socket in ready if not s == socket):
-                                            # dont send if that port is disabled
-                                            if s in enabledPorts:
-                                                s.send(json_data)
+                            bpdu = data['message']
+
+                            if bpdu['root'] < rootID:
+                                    rootID = bpdu['root']
+                                    cost = bpdu['cost'] + 1
+                                    rootPortID = bpdu['id']
+                                    rootPort = socket
+                            elif bpdu['root'] == rootID and bpdu['cost'] < cost:
+                                    rootID = bpdu['root']
+                                    cost = bpdu['cost'] + 1
+                                    rootPortID = bpdu['id']
+                                    rootPort = socket
+                            elif bpdu['root'] == rootID and bpdu['cost'] == cost and bpdu['id'] < id:
+                                    rootID = bpdu['root']
+                                    cost = bpdu['cost'] + 1
+                                    rootPortID = bpdu['id']
+                                    rootPort = socket
 
 
-                        #there will be a period at startup where messages dont get sent is this ok?
-                        for s in sockets:
-                            if s not in enabledPorts:
-                                #did not receive bpdu on that port
-                                if s not in didReceivePBDU:
-                                    enabledPorts.append(s)
+                    if data['type'] == "data":
+                            print "Received message {} on port {} from {} to {}".format(data['message']['id'], socketIDdict.get(socket), data['source'], data['dest'])
+                            #if we receive a socket from a disabled port, drop the message
+                            if socket not in enabledPorts:
+                                # continue will (should) ignore the rest of the iteration and start from the next socket in `for socket in ready`
+                                print "Not forwarding message {}".format(data['message']['id'])
+                                continue
 
-                                #port is a rootPort
-                                if s == rootPort:
-                                    enabledPorts.append(s)
+                            hostIsInTable = False
+                            for row in forwardingTable:
+                                    if data['source'] == row.host:
+                                            hostIsInTable = True
+
+                            if not hostIsInTable: #add it to forwarding table
+                                    newEntry = TableEntry(host=data['source'], port=socket)
+                                    forwardingTable.append(newEntry)
+
+                            destIsInTable = False
+                            for row in forwardingTable:
+                                    if data['dest'] == row.host:
+                                            destIsInTable = True
+                                            print "Forwarding message {} to port {}".format(data['message']['id'], socketIDdict.get(socket))
+                                            #TODO: check if row.port in enabled ports? probably even though we think we know exactly where to send it
+                                            row.port.send(json_data)
+
+                            if not destIsInTable: #send it to all enabled ports
+                                    # ready or sockets?
+                                    print "Broadcasting message {} to all ports".format(data['message']['id'])
+                                    for s in (socket for socket in ready if not s == socket):
+                                        # dont send if that port is disabled
+                                        if s in enabledPorts:
+                                            s.send(json_data)
+
+
+                    #there will be a period at startup where messages dont get sent is this ok?
+                    for s in sockets:
+                        if s not in enabledPorts:
+                            #did not receive bpdu on that port
+                            if s not in didReceivePBDU:
+                                enabledPorts.append(s)
+
+                            #port is a rootPort
+                            if s == rootPort:
+                                enabledPorts.append(s)
 
                                 #all other bridges on that LAN have a longer path to the root, or their bridge ID is higher than yours (I think those will be the same?)
 
@@ -159,6 +175,25 @@ if __name__ == "__main__":
                 #TODO: disabling ports
                 #TODO: check if a port stopped receiving bpdu's <- may not be right
                 # when does the bridge decide to start shutting off ports?
+
+
+
+# Form a spanning tree in order to prevent packet loops
+# Handle the failure of bridges, the failure of bridge ports, and the introduction of new bridges and LANs over time
+# Learn the locations of end hosts
+# Deliver end host packets to the destination
+# Handle the mobility of end hosts between LANs
+# Senders and receivers must print out specified debugging messages to STDOUT
+# Your program must be called 3700bridge
+# You should implement a simplified version of the standard bridge spanning tree protocol that we discussed in class. Note that more sophisticated and properly tuned algorithms (i.e., those which perform better) will be given higher credit. For example, some desired properties include (but are not limited to):
+# Fast convergence: Require little time to form a spanning tree.
+# Low overhead: Reduce packet flooding when possible.
+
+
+
+
+# Forwarding message <id> to port <port_id>
+
 
 
 
