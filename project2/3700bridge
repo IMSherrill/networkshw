@@ -90,18 +90,18 @@ if __name__ == "__main__":
 
                                 if bpdu['root'] < rootID:
                                         rootID = bpdu['root']
-                                        cost = cost + 1
+                                        cost = bpdu['cost'] + 1
                                         rootPort = bpdu['id']
                                 elif bpdu['root'] == rootID and bpdu['cost'] < cost:
                                         rootID = bpdu['root']
-                                        cost = cost + 1
+                                        cost = bpdu['cost'] + 1
                                         rootPort = bpdu['id']
                                 elif bpdu['root'] == rootID and bpdu['cost'] == cost and bpdu['id'] < id:
                                         rootID = bpdu['root']
-                                        cost = cost + 1
+                                        cost = bpdu['cost'] + 1
                                         rootPort = bpdu['id']
 
-                                print "!!!!!! id: {}, rootID: {}, rootPort: {}".format(id, rootID, rootPort)
+                                print "!!!!!! id: {}, rootID: {}, rootPort: {}, cost: {}".format(id, rootID, rootPort,cost)
 
                         if data['type'] == "data":
                                 #if we receive a socket from a disabled port, drop the message
