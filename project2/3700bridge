@@ -32,6 +32,7 @@ if __name__ == "__main__":
         rootPort = 0
 
         forwardingTable = []
+        # i wanna say disable ports that receive bpdu's and are not the rootport
         disabledPorts = []
 
         def broadcastBPDU():
@@ -100,15 +101,20 @@ if __name__ == "__main__":
                                         cost = cost + 1
                                         rootPort = bpdu['id']
 
-                                print "!!!!!! rootID: {}, rootPort: {}".format(rootID, rootPort)
+                                print "!!!!!! id: {}, rootID: {}, rootPort: {}".format(id, rootID, rootPort)
 
                         if data['type'] == "data":
+                                #if we receive a socket from a disabled port, drop the message
+                                if socket in disabledPorts:
+                                    #continue will (should) ignore the rest of the iteration and start from the next socket in `for socket in ready`
+                                    continue
+
                                 hostIsInTable = False
                                 for row in forwardingTable:
                                         if data['source'] == row.host:
                                                 hostIsInTable = True
 
-                                if not hostIsInTable:
+                                if not hostIsInTable: #add it to forwarding table
                                         newEntry = TableEntry(host=data['source'], port=socket)
                                         forwardingTable.append(newEntry)
 
@@ -118,14 +124,17 @@ if __name__ == "__main__":
                                                 destIsInTable = True
                                                 row.port.send(json_data)
 
-                                if not destIsInTable:
+                                if not destIsInTable: #send it to all enabled ports
                                         # ready or sockets?
                                         for s in (socket for socket in ready if not s == socket):
+                                            # dont send if that port is disabled
+                                            if s not in disabledPorts:
                                                 s.send(json_data)
 
                                 
                                 #TODO: disabling ports
                                 #TODO: check if a port stopped receiving bpdu's <- may not be right
+                                # when does the bridge decide to start shutting off ports?
 
 
 
