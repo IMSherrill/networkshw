@@ -38,7 +38,7 @@ if __name__ == "__main__":
         forwardingTable = []
         enabledPorts = []
         disabledPorts = []
-        didReceivePBDU = []
+        BPDUReceivedAt ={}
 
         timeBroadCastBPDU = datetime.datetime.now() - datetime.timedelta(0,10,0)
         timeClearedOldEntries = datetime.datetime.now()
@@ -70,6 +70,21 @@ if __name__ == "__main__":
             for row in forwardingTable:
                 print "{} {}".format(row.host, socketIDdict.get(row.port))
 
+        def portEnable(port):
+            if port in enabledPorts:
+                print "port {} already enabled".format(socketIDdict.get(port))
+            else:
+                disabledPorts.remove(port)
+                enabledPorts.append(port)
+
+
+        def portDisable(port):
+            if port in disabledPorts:
+                print "port {} already disabled".format(socketIDdict.get(port))
+            else:
+                enabledPorts.remove(port)
+                disabledPorts.append(port)
+
                 
 
         # creates sockets and connects to them
@@ -80,6 +95,7 @@ if __name__ == "__main__":
         
         print "Bridge " + id + " starting up\n"
         
+        disabledPorts = list(sockets)
         broadcastBPDU()
         removeOldEntries()
  
@@ -115,8 +131,7 @@ if __name__ == "__main__":
                     bpdu = False
 
                     if data['type'] == "bpdu":
-                            if socket not in didReceivePBDU:
-                                didReceivePBDU.append(didReceivePBDU)
+                            BPDUReceivedAt[socket] = datetime.datetime.now();
 
                             bpdu = data['message']
 
@@ -150,6 +165,13 @@ if __name__ == "__main__":
                                     if data['source'] == row.host:
                                             hostIsInTable = True
 
+                                            #if host is in table but with a different port, disable that port
+                                            if not row.port == socket:
+                                                portDisable(port=socket)
+                                                # print "!!!!-------- {}".format(socketIDdict.get(socket))
+
+                                    
+
                             if not hostIsInTable: #add it to forwarding table
                                     newEntry = TableEntry(host=data['source'], port=socket)
                                     forwardingTable.append(newEntry)
@@ -163,7 +185,6 @@ if __name__ == "__main__":
                                             row.port.send(json_data)
 
                             if not destIsInTable: #send it to all enabled ports
-                                    # ready or sockets?
                                     print "Broadcasting message {} to all ports".format(data['message']['id'])
                                     for s in sockets:
 
@@ -177,12 +198,16 @@ if __name__ == "__main__":
                     for s in sockets:
                         if s not in enabledPorts:
                             #did not receive bpdu on that port
-                            if s not in didReceivePBDU:
-                                enabledPorts.append(s)
+
+                            #TODO: Logic this out, if a port was just turned off we dont wanna turn it back on
+                            if not BPDUReceivedAt.get(s):
+                                portEnable(port=s)
+                                # print "!!!!++++++++ {}".format(socketIDdict.get(s))
 
                             #port is a rootPort
                             if s == rootPort:
-                                enabledPorts.append(s)
+                                portEnable(port=s)
+                                # print "!!!!++++++++ {}".format(socketIDdict.get(s))
 
                                 #all other bridges on that LAN have a longer path to the root, or their bridge ID is higher than yours (I think those will be the same?)
 
@@ -191,7 +216,6 @@ if __name__ == "__main__":
                                 
                 #TODO: disabling ports
                 #TODO: if a port hasnt received a bpdu in a certina amount of time (check the site) disable
-                #TODO: keep track of time last bpdu was received on each port
                 #TODO: address ffff should be received by all hosts and bridges
 
 
@@ -211,10 +235,6 @@ if __name__ == "__main__":
 # Fast convergence: Require little time to form a spanning tree.
 # Low overhead: Reduce packet flooding when possible.
 
-
-
-
-# Forwarding message <id> to port <port_id>
 
 
 
