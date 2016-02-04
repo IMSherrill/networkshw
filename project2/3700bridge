@@ -7,11 +7,27 @@ import threading
 import json
 import datetime
 
+# dictionary keyed on destination host -> port, timestamp
 class TableEntry:
         def __init__(self, host, port):
                 self.createdAt = datetime.datetime.now()
                 self.port = port
                 self.host = host
+
+# what we need to know about bpdu's:
+    # hostID
+    # rootID
+    # cost
+    # timestamp
+    # port
+
+class BPDU:
+    def __init__(self, host, root, cost):
+        self.createdAt = datetime.datetime.now()
+        self.host = host
+        self.cost = cost
+        self.root = root
+
  
 # pads the name with null bytes at the end
 def pad(name):
@@ -24,6 +40,7 @@ def pad(name):
 if __name__ == "__main__":
         
         id = sys.argv[1]
+        # Can we use this information?
         LAN = sys.argv[2:]
         sockets = []
 
@@ -33,15 +50,18 @@ if __name__ == "__main__":
         rootID = id
         cost = 0
         rootPortID = 0
+        #whats the default root port? I guess doesnt matter?
         rootPort = False
 
         forwardingTable = []
         enabledPorts = []
         disabledPorts = []
-        BPDUReceivedAt ={}
+        bpduTable = {}
 
         timeBroadCastBPDU = datetime.datetime.now() - datetime.timedelta(0,10,0)
         timeClearedOldEntries = datetime.datetime.now()
+
+        seenMessages = []
 
         def broadcastBPDU():                
                 BPDU = {"source": id, 
@@ -66,6 +86,50 @@ if __name__ == "__main__":
                         if (now - row.createdAt).seconds > 5:
                                 forwardingTable.remove(row)
 
+        def RecalculateBPDU():
+            rootID = id
+            cost = 0
+            rootPortID = 0
+            rootPort = False
+
+            for port in bpduTable:
+                for bpdu in port:
+                    if bpdu['root'] < rootID:
+                        useNewBPDU(bpdu=bpdu, socket=port)
+                    elif bpdu['root'] == rootID and bpdu['cost'] < cost:
+                        useNewBPDU(bpdu=bpdu, socket=port)
+                    elif bpdu['root'] == rootID and bpdu['cost'] == cost and bpdu['id'] < id:
+                        useNewBPDU(bpdu=bpdu, socket=port)
+
+
+            for socket in sockets:
+                if bpduTable.get(socket):
+                        bpdu = bpduTable.get(socket)
+                        if rootID == pbdu['root']:
+                            portEnable(socket)
+                        elif bpdu['cost'] > cost:
+                            portEnable(socket)
+                        # elif:
+                            #break ties with lower bridge ID
+                            pass
+                        else:
+                            portDisable(socket)
+
+                else:
+                    portEnable(socket)
+
+                if socket == rootPort:
+                        portEnable(socket)
+
+
+
+
+
+
+
+
+
+
         def useNewBPDU(bpdu, socket):
             rootID = bpdu['root']
             print "New root: {}/{}".format(id, rootID)
@@ -77,26 +141,37 @@ if __name__ == "__main__":
 
 
         def printForwardingTable():
-            print id
+            table = "{} forwarding table:".format(id)
             for row in forwardingTable:
-                print "{} {}".format(row.host, socketIDdict.get(row.port))
+                able = "+" if row.port in enabledPorts else "-"
+                table = table + "\n{} {} {}".format(able, row.host, socketIDdict.get(row.port))
+            print table
 
-        def portEnable(port):
+        def portEnable(port, debug=False):
             if port in enabledPorts:
-                print "port {} already enabled".format(socketIDdict.get(port))
+                if debug:
+                    print "port {} already enabled".format(socketIDdict.get(port))
             else:
                 disabledPorts.remove(port)
                 enabledPorts.append(port)
                 print "Enabled port: {}".format(socketIDdict.get(port))
 
 
-        def portDisable(port, message=""):
+        def portDisable(port, debug=False, message=""):
             if port in disabledPorts:
-                print "port {} already disabled".format(socketIDdict.get(port))
+                if debug:
+                    print "port {} already disabled".format(socketIDdict.get(port))
             else:
                 enabledPorts.remove(port)
                 disabledPorts.append(port)
                 print "Disabled port: {} {}".format(socketIDdict.get(port), message)
+
+        def checkTableValidity():
+            for row in forwardingTable:
+                    for row2 in forwardingTable:
+                        if row.host == row2.host and not row == row2:
+                            if row.port in enabledPorts and row2.port in enabledPorts:
+                                print "CONFLICT: {} &&&&&& {}".format(socketIDdict.get(row.port),socketIDdict(row2.port))
 
 
                 
@@ -108,6 +183,11 @@ if __name__ == "__main__":
                 sockets.append(s)
         
         print "Bridge " + id + " starting up\n"
+
+        for socket in sockets:
+            if not socketIDdict.get(socket):
+                socketIDdict[socket] = "{}:{}".format(id,LANPortNumber)
+                LANPortNumber += 1
         
         disabledPorts = list(sockets)
         broadcastBPDU()
@@ -116,7 +196,7 @@ if __name__ == "__main__":
         # Main loop
         while True:
                 # Calls select with all the sockets; change the timeout value (1)
-                ready, ignore, ignore2 = select.select(sockets, [], [], 1)
+                ready, ignore, ignore2 = select.select(sockets, [], [], .1)
 
                 if (datetime.datetime.now() - timeBroadCastBPDU) > datetime.timedelta(seconds=.5):
                     timeBroadCastBPDU = datetime.datetime.now()
@@ -131,28 +211,31 @@ if __name__ == "__main__":
                 # Reads from each fo the ready sockets
                 for socket in ready:
 
-                    if not socketIDdict.get(socket):
-                        socketIDdict[socket] = "{}:{}".format(id,LANPortNumber)
-                        LANPortNumber += 1
-
-
                     json_data = socket.recv(1500)
 
                     data = json.loads(json_data)
 
+                    if not socketIDdict.get(socket):
+                        socketIDdict[socket] = "{}:{}".format(id,LANPortNumber)
+                        LANPortNumber += 1
+
                     bpdu = False
-
                     if data['type'] == "bpdu":
-                            BPDUReceivedAt[socket] = datetime.datetime.now();
-
+                            
                             bpdu = data['message']
 
-                            if bpdu['root'] < rootID:
-                                    useNewBPDU(bpdu=bpdu, socket=socket)
-                            elif bpdu['root'] == rootID and bpdu['cost'] < cost:
-                                    useNewBPDU(bpdu=bpdu, socket=socket)
-                            elif bpdu['root'] == rootID and bpdu['cost'] == cost and bpdu['id'] < id:
-                                    useNewBPDU(bpdu=bpdu, socket=socket)
+                            newBPDU = BPDU(host=bpdu['id'], root=bpdu['root'], cost=bpdu['cost'])
+
+                            if bpduTable.get(socket):
+                                bpduTable[socket].append(newBPDU)
+                            else:
+                                bpdu[socket] = [bpdu]
+
+
+                    RecalculateBPDU()
+                    #in recalculate BPDU turn on all sockets then turn some off during logic?
+
+
 
 
                     #####################
@@ -160,16 +243,18 @@ if __name__ == "__main__":
                     #####################
                     # there will be a period at startup where messages dont get sent is this ok -- how long before first message gets sent?
                     # also where should this block be?
+                    # this is the first iteration, will pretty much turn on all ports but one (assuming we have a big network), Do we need a period of just pbdu?
                     for s in sockets:
                         if s not in enabledPorts:
                             #did not receive bpdu on that port
 
-                            if BPDUReceivedAt.get(s):
-                                # Additionally, you should "timeout" BPDUs after 750 ms. 
-                                # I think this means if its too old assume that port is gone ? not sure
-                                pass
-                            else: # never received bpdu, keep on cuz might be direct connect to LAN
-                                portEnable(port=s)
+                            # if BPDUReceivedAt.get(s):
+                            #     # Additionally, you should "timeout" BPDUs after 750 ms. 
+                            #     # I think this means if its too old assume that port is gone ? not sure
+                            #     pass
+                            # else: # never received bpdu, keep on cuz might be direct connect to LAN
+                            #     portEnable(port=s)
+                            #     printForwardingTable()
 
                             #port is a rootPort
                             if s == rootPort:
@@ -180,11 +265,20 @@ if __name__ == "__main__":
 
                     if data['type'] == "data":
                             print "Received message {} on port {} from {} to {}".format(data['message']['id'], socketIDdict.get(socket), data['source'], data['dest'])
+                            
+                            #TODO: replace with better logic, when dealing with enabled ports get rid of this
+                            # if not data['message'].get('id') in seenMessages:
+                            #     seenMessages.append(data['message'].get('id'))
+                            # else:
+                            #     print "dropped loop"
+                            #     continue
+
                             #if we receive a socket from a disabled port, drop the message
                             if socket not in enabledPorts:
                                 print "Not forwarding message {}".format(data['message']['id'])
                                 continue
 
+ 
                             hostIsInTable = False
                             for row in forwardingTable:
                                     if data['source'] == row.host:
@@ -192,12 +286,14 @@ if __name__ == "__main__":
 
                                             #if host is in table but with a different port, disable that port
                                             if not row.port == socket:
-                                                portDisable(port=row.port)
+                                                    portDisable(port=row.port)
   
                             if not hostIsInTable: #add it to forwarding table
                                     newEntry = TableEntry(host=data['source'], port=socket)
                                     forwardingTable.append(newEntry)
 
+
+                            checkTableValidity()
 
 
                             destIsInTable = False
